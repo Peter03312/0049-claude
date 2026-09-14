@@ -1,0 +1,18 @@
+# Node
+node_modules/
+dist/
+*.log
+npm-debug.log*
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.db
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

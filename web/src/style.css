@@ -1,0 +1,203 @@
+:root {
+  --green-900: #1b4332;
+  --green-700: #2d6a4f;
+  --green-500: #52b788;
+  --green-200: #b7e4c7;
+  --green-50: #f0faf3;
+  --amber: #f4a261;
+  --red: #e76f51;
+  --ink: #233027;
+  --grey: #6b7a70;
+  --line: #d8e6dc;
+  --card: #ffffff;
+  --shadow: 0 4px 14px rgba(27, 67, 50, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Noto Sans CJK SC', system-ui, sans-serif;
+  background: var(--green-50);
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+#app {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 16px 64px;
+}
+
+h1 {
+  font-size: 26px;
+  margin: 8px 0 4px;
+  color: var(--green-900);
+}
+
+h2 {
+  font-size: 20px;
+  margin: 0 0 12px;
+  color: var(--green-900);
+}
+
+h3 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+
+button {
+  font-family: inherit;
+  font-size: 15px;
+  border: none;
+  border-radius: 999px;
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: transform 0.05s ease, opacity 0.15s ease;
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--green-700);
+  color: #fff;
+  font-weight: 700;
+}
+
+.btn-light {
+  background: var(--green-200);
+  color: var(--green-900);
+  font-weight: 600;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--green-700);
+  border: 1.5px solid var(--green-200);
+}
+
+.btn-danger {
+  background: #fde8e2;
+  color: var(--red);
+}
+
+.btn-yes {
+  background: var(--green-500);
+  color: #fff;
+  font-weight: 700;
+  font-size: 17px;
+  padding: 12px 28px;
+}
+
+.btn-no {
+  background: var(--amber);
+  color: #4a2c10;
+  font-weight: 700;
+  font-size: 17px;
+  padding: 12px 28px;
+}
+
+input[type='text'],
+input:not([type]) {
+  font-family: inherit;
+  font-size: 15px;
+  padding: 8px 12px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  width: 100%;
+  background: #fff;
+  color: var(--ink);
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--green-500);
+}
+
+.id-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--green-700);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.muted {
+  color: var(--grey);
+  font-size: 13px;
+}
+
+.banner {
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.banner-error {
+  background: #fde8e2;
+  color: #8a3319;
+  border: 1px solid #f5c2b4;
+}
+
+.banner-info {
+  background: #fff7e8;
+  color: #7a4e12;
+  border: 1px solid #f3ddb0;
+}
+
+.banner-ok {
+  background: var(--green-50);
+  color: var(--green-900);
+  border: 1px solid var(--green-200);
+}
+
+.spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border: 2.5px solid rgba(255, 255, 255, 0.5);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stack-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}

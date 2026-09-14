@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# 一次性 verify：运行后端测试、前端构建、API 接口冒烟。
+# 用法：./scripts/verify
+# 不依赖 Docker；本机需有 python3 与 node/npm。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+echo "▶ 1/4 准备 Python 环境"
+if [[ -x ".venv/bin/python" ]]; then
+  PY=".venv/bin/python"
+else
+  python3 -m venv .venv
+  PY=".venv/bin/python"
+fi
+if ! "$PY" -c "import fastapi, pytest, httpx" 2>/dev/null; then
+  "$PY" -m pip install --quiet --upgrade pip
+  "$PY" -m pip install --quiet -r backend/requirements-dev.txt
+fi
+
+echo "▶ 2/4 后端测试（核心算法 + API，覆盖最优/并列/两类无解/未知值）"
+(cd backend && "../$PY" -m pytest -q)
+
+echo "▶ 3/4 前端类型检查与生产构建"
+(cd web && ([[ -d node_modules ]] || npm ci --no-audit --no-fund) && npm run build)
+
+echo "▶ 4/4 API 接口冒烟（启动临时服务并实际请求）"
+SMOKE_PORT="${SMOKE_PORT:-8123}"
+SMOKE_DB="$(mktemp -d)/smoke.db"
+trap 'kill "${UV_PID:-0}" 2>/dev/null || true' EXIT
+
+(
+  cd backend
+  DB_PATH="$SMOKE_DB" "../$PY" -m uvicorn app.main:app \
+    --host 127.0.0.1 --port "$SMOKE_PORT" --log-level warning
+) &
+UV_PID=$!
+
+"$PY" scripts/smoke.py "$SMOKE_PORT"
+kill "$UV_PID" 2>/dev/null || true
+wait "$UV_PID" 2>/dev/null || true
+
+echo ""
+echo "✅ verify 全部通过：测试、构建、接口冒烟都成功。"
