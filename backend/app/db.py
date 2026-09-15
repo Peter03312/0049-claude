@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # 容器内工作目录为 /data 并挂卷；本地运行则落在当前目录。
@@ -39,3 +39,20 @@ def init_db() -> None:
     from app import models  # noqa: F401  确保模型已注册
 
     Base.metadata.create_all(engine)
+    _migrate(inspect(engine), engine)
+
+
+def _migrate(inspector, engine) -> None:
+    """极轻量的列迁移：老版本数据库没有 locks 列时补上。"""
+    with engine.begin() as conn:
+        for table, default in (
+            ("projects", "'[]'"),
+            ("snapshots", "'[]'"),
+        ):
+            if not inspector.has_table(table):
+                continue
+            cols = {c["name"] for c in inspector.get_columns(table)}
+            if "locks" not in cols:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN locks TEXT DEFAULT {default}")
+                )

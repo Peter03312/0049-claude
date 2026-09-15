@@ -26,6 +26,8 @@ class Project(Base):
     attributes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # 单元格：{"对象id:属性id": "true|false|unknown"}
     cells: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # 路径锁定：[{"path": ["false"|"true", ...], "attributeId": 正整数}]
+    locks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # 输入版本号：任何编辑 +1，令旧结果过期
     input_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -66,6 +68,7 @@ class Snapshot(Base):
     objects: Mapped[list] = mapped_column(JSON, nullable=False)
     attributes: Mapped[list] = mapped_column(JSON, nullable=False)
     cells: Mapped[dict] = mapped_column(JSON, nullable=False)
+    locks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 

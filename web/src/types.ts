@@ -22,6 +22,9 @@ export interface TreeNode {
   attributeId: number
   false: TreeNode | LeafNode
   true: TreeNode | LeafNode
+  /** 该节点是否由用户的预定步骤（路径锁定）指定 */
+  locked?: boolean
+  lockPath?: ('true' | 'false')[]
 }
 
 export interface LeafNode {
@@ -47,13 +50,22 @@ export interface BlockReason {
   objectIds: number[]
 }
 
+/** 路径锁定：path 为从根起的假/真回答（空数组=根节点），
+ *  attributeId 为走到该节点时必须询问的特征。 */
+export interface PathLock {
+  path: ('true' | 'false')[]
+  attributeId: number
+}
+
 export type ComputeResult =
-  | { status: 'ok'; tree: TreeNode; score: TreeScore }
+  | { status: 'ok'; tree: TreeNode; score: TreeScore; locks?: PathLock[] }
   | {
       status: 'no_lock'
       blockingPath: BlockStep[]
       terminalObjectIds: number[]
       reasons: BlockReason[]
+      locks?: PathLock[]
+      violatedLock?: PathLock
     }
   | {
       status: 'inseparable'
@@ -67,6 +79,7 @@ export interface Project {
   objects: LeafCardObject[]
   attributes: LeafCardAttribute[]
   cells: CellMap
+  locks: PathLock[]
   inputVersion: number
   result: ComputeResult | null
   resultVersion: number | null
@@ -82,6 +95,7 @@ export interface Snapshot {
   objects: LeafCardObject[]
   attributes: LeafCardAttribute[]
   cells: CellMap
+  locks: PathLock[]
   result: ComputeResult
   createdAt: string
 }
@@ -91,4 +105,5 @@ export interface ProjectInput {
   objects: LeafCardObject[]
   attributes: LeafCardAttribute[]
   cells: CellMap
+  locks: PathLock[]
 }

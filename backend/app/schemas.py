@@ -7,6 +7,13 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 Tribool = Literal["true", "false", "unknown"]
+Branch = Literal["true", "false"]
+
+
+class LockIn(BaseModel):
+    # 从根开始的假/真分支序列；空列表表示锁定根节点
+    path: List[Branch] = Field(default_factory=list, max_length=19)
+    attributeId: int = Field(gt=0)
 
 
 class ObjectIn(BaseModel):
@@ -27,6 +34,8 @@ class ProjectIn(BaseModel):
     attributes: List[AttributeIn] = Field(min_length=1, max_length=20)
     # 键形如 "对象id:属性id"，缺省单元格按「未知」处理
     cells: Dict[str, Tribool] = Field(default_factory=dict)
+    # 路径锁定（可为空）
+    locks: List[LockIn] = Field(default_factory=list, max_length=40)
 
     @field_validator("name")
     @classmethod
@@ -77,6 +86,7 @@ class ProjectOut(BaseModel):
     objects: list
     attributes: list
     cells: dict
+    locks: list
     inputVersion: int
     result: Optional[dict]
     resultVersion: Optional[int]
@@ -92,6 +102,7 @@ class SnapshotOut(BaseModel):
     objects: list
     attributes: list
     cells: dict
+    locks: list
     result: dict
     createdAt: str
 

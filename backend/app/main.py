@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import List
-
 from contextlib import asynccontextmanager
+from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.core.tree import Matrix, normalize_locks
 from app.db import get_db, init_db
 from app.models import Project, Snapshot
 from app.schemas import ComputeOut, ProjectIn, ProjectOut, SnapshotOut
@@ -22,7 +22,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="树叶辨认卡 API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="树叶辨认卡 API", version="1.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +37,28 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _build_matrix(payload_data: dict) -> Matrix:
+    obj_ids = [o["id"] for o in payload_data["objects"]]
+    attr_ids = [a["id"] for a in payload_data["attributes"]]
+    cells = {
+        (int(k.split(":")[0]), int(k.split(":")[1])): v
+        for k, v in payload_data["cells"].items()
+    }
+    return Matrix(obj_ids, cells, attr_ids=attr_ids)
+
+
+def _validate_input(payload: ProjectIn) -> dict:
+    data = payload.normalized()
+    data["locks"] = [lk.model_dump() for lk in payload.locks]
+    matrix = _build_matrix(data)
+    try:
+        _, normalized = normalize_locks(data["locks"], matrix)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"锁定设置有误：{e}") from None
+    data["locks"] = normalized
+    return data
+
+
 def _serialize_project(p: Project) -> dict:
     return {
         "id": p.id,
@@ -44,6 +66,7 @@ def _serialize_project(p: Project) -> dict:
         "objects": p.objects,
         "attributes": p.attributes,
         "cells": p.cells,
+        "locks": p.locks or [],
         "inputVersion": p.input_version,
         "result": p.result if p.result_fresh else None,
         "resultVersion": p.result_version if p.result_fresh else None,
@@ -61,6 +84,7 @@ def _serialize_snapshot(s: Snapshot) -> dict:
         "objects": s.objects,
         "attributes": s.attributes,
         "cells": s.cells,
+        "locks": getattr(s, "locks", []) or [],
         "result": s.result,
         "createdAt": s.created_at.isoformat() if s.created_at else None,
     }
@@ -75,12 +99,13 @@ def _get_project(db: Session, project_id: int) -> Project:
 
 @app.post("/api/projects", response_model=ProjectOut, status_code=201)
 def create_project(payload: ProjectIn, db: Session = Depends(get_db)) -> dict:
-    data = payload.normalized()
+    data = _validate_input(payload)
     p = Project(
         name=data["name"],
         objects=data["objects"],
         attributes=data["attributes"],
         cells=data["cells"],
+        locks=data["locks"],
         input_version=1,
         result=None,
         result_version=None,
@@ -93,7 +118,10 @@ def create_project(payload: ProjectIn, db: Session = Depends(get_db)) -> dict:
 
 @app.get("/api/projects", response_model=List[ProjectOut])
 def list_projects(db: Session = Depends(get_db)) -> list:
-    return [_serialize_project(p) for p in db.query(Project).order_by(Project.id).all()]
+    return [
+        _serialize_project(p)
+        for p in db.query(Project).order_by(Project.id).all()
+    ]
 
 
 @app.get("/api/projects/{project_id}", response_model=ProjectOut)
@@ -107,11 +135,12 @@ def update_project(
 ) -> dict:
     """编辑输入：版本号 +1 并令旧树过期（不展示、不当作有效结果）。"""
     p = _get_project(db, project_id)
-    data = payload.normalized()
+    data = _validate_input(payload)
     p.name = data["name"]
     p.objects = data["objects"]
     p.attributes = data["attributes"]
     p.cells = data["cells"]
+    p.locks = data["locks"]
     p.input_version += 1
     p.result = None
     p.result_version = None
@@ -130,9 +159,11 @@ def delete_project(project_id: int, db: Session = Depends(get_db)) -> Response:
 
 @app.post("/api/projects/{project_id}/compute", response_model=ComputeOut)
 def compute(project_id: int, db: Session = Depends(get_db)) -> dict:
-    """按当前输入计算辨认树：保存结果，并把输入+结果存为快照。"""
+    """按当前输入（含锁定）计算辨认树：保存结果，并把输入+结果存为快照。"""
     p = _get_project(db, project_id)
-    result = compute_project(p.objects, p.attributes, p.cells)
+    result = compute_project(
+        p.objects, p.attributes, p.cells, locks=p.locks or []
+    )
 
     snapshot = Snapshot(
         project_id=p.id,
@@ -140,6 +171,7 @@ def compute(project_id: int, db: Session = Depends(get_db)) -> dict:
         objects=p.objects,
         attributes=p.attributes,
         cells=p.cells,
+        locks=p.locks or [],
         result=result,
     )
     db.add(snapshot)

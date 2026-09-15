@@ -1,23 +1,25 @@
-"""核心算法测试：最优树、并列裁决、锁定无解、其他无解、未知值保护。"""
+"""核心算法测试：最优树、并列裁决、路径锁定、两类无解、未知值保护、乱序编号。"""
 
 from app.core.tree import (
     FALSE,
     Matrix,
     TRUE,
     UNKNOWN,
+    LockedSolver,
     Solver,
     build_tree,
+    normalize_locks,
 )
 
 
-def m(objs, rows):
+def m(objs, rows, attr_ids=None):
     """rows: {attr_id: [按 objs 顺序的值列表]}"""
     cells = {}
     for aid, vals in rows.items():
         for oid, v in zip(objs, vals):
             if v is not None:
                 cells[(oid, aid)] = v
-    return Matrix(list(objs), cells)
+    return Matrix(list(objs), cells, attr_ids=sorted(attr_ids or rows))
 
 
 def root(result):
@@ -173,3 +175,194 @@ def test_solver_caches_are_independent():
     assert s1.solve(0b11) is not None
     s2 = Solver(m([1, 2], {1: [TRUE, UNKNOWN]}))
     assert s2.solve(0b11) is None
+
+
+# ---------- 路径锁定 ----------
+
+def test_lock_forces_root_attribute():
+    # 自由最优根是 4；把根锁成 1 后，根必须是 1
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, FALSE, FALSE, FALSE],
+        2: [UNKNOWN, TRUE, TRUE, FALSE],
+        3: [UNKNOWN, TRUE, FALSE, UNKNOWN],
+        4: [TRUE, TRUE, FALSE, FALSE],
+        5: [TRUE, FALSE, UNKNOWN, UNKNOWN],
+        6: [UNKNOWN, UNKNOWN, TRUE, FALSE],
+    })
+    free = build_tree(matrix)
+    assert root(free) == 4
+
+    locked = build_tree(matrix, [{"path": [], "attributeId": 1}])
+    assert locked["status"] == "ok"
+    assert root(locked) == 1
+    assert locked["tree"]["locked"] is True
+    # 仍是完整树：4 张卡全到叶子
+    assert locked["score"]["maxDepth"] == 3
+
+
+def test_lock_deep_path_forces_node():
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, TRUE, FALSE, FALSE],
+        2: [TRUE, FALSE, UNKNOWN, UNKNOWN],
+        3: [UNKNOWN, UNKNOWN, TRUE, FALSE],
+        7: [FALSE, TRUE, UNKNOWN, UNKNOWN],
+    })
+    # 路径 (真,) 对应根 1 的真组 {1,2}；锁该节点必须用 7
+    r = build_tree(matrix, [{"path": [TRUE], "attributeId": 7}])
+    assert r["status"] == "ok"
+    assert r["tree"]["true"]["attributeId"] == 7
+    assert r["tree"]["true"]["locked"] is True
+    # 假子树仍自由选编号最小的 3
+    assert r["tree"]["false"]["attributeId"] == 3
+
+
+def test_lock_illegal_attribute_gives_no_lock():
+    # 属性 1 在根合法；属性 2 在根含未知（对象3、4未知），锁根=2 => 无解
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, TRUE, FALSE, FALSE],
+        2: [TRUE, FALSE, UNKNOWN, UNKNOWN],
+        3: [UNKNOWN, UNKNOWN, TRUE, FALSE],
+    })
+    r = build_tree(matrix, [{"path": [], "attributeId": 2}])
+    assert r["status"] == "no_lock"
+    assert "tree" not in r
+    assert r["blockingPath"] == []  # 阻断点就是根
+    assert r["terminalObjectIds"] == [1, 2, 3, 4]
+    assert r["violatedLock"] == {"path": [], "attributeId": 2}
+    reasons = {x["attributeId"]: x for x in r["reasons"]}
+    assert reasons[2]["reason"] == "unknown"
+    assert reasons[2]["objectIds"] == [3, 4]
+
+
+def test_lock_dead_end_down_path():
+    # 锁根=2；2 的真分支通向 {3,4}，那里属性3 同真、属性1 同假 => 死胡同
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, FALSE, FALSE, FALSE],
+        2: [FALSE, FALSE, TRUE, TRUE],
+        3: [UNKNOWN, FALSE, TRUE, TRUE],
+        4: [TRUE, FALSE, UNKNOWN, UNKNOWN],
+    })
+    r = build_tree(matrix, [{"path": [], "attributeId": 2}])
+    assert r["status"] == "no_lock"
+    assert r["blockingPath"] == [{"attributeId": 2, "branch": TRUE}]
+    assert r["terminalObjectIds"] == [3, 4]
+    assert "violatedLock" not in r  # 死路不是被锁的节点本身
+    kinds = {x["reason"] for x in r["reasons"]}
+    assert "same" in kinds
+
+
+def test_lock_prefers_false_branch_when_both_blocked():
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, TRUE, FALSE, FALSE],
+        2: [TRUE, UNKNOWN, UNKNOWN, FALSE],
+    })
+    r = build_tree(matrix, [{"path": [], "attributeId": 1}])
+    assert r["status"] == "no_lock"
+    assert r["blockingPath"] == [{"attributeId": 1, "branch": FALSE}]
+    assert r["terminalObjectIds"] == [3, 4]
+
+
+def test_normalize_locks_validation():
+    matrix = m([1, 2, 3, 4], {1: [TRUE, FALSE, TRUE, FALSE]})
+    _, norm = normalize_locks(
+        [
+            {"path": [], "attributeId": 1},
+            {"path": [], "attributeId": 1},  # 重复，去重
+            {"path": [FALSE], "attributeId": 1},
+        ],
+        matrix,
+    )
+    assert norm == [
+        {"path": [], "attributeId": 1},
+        {"path": [FALSE], "attributeId": 1},
+    ]
+
+    import pytest
+    with pytest.raises(ValueError):
+        normalize_locks([{"path": [], "attributeId": 99}], matrix)
+    with pytest.raises(ValueError):
+        # 同路径锁两个特征
+        normalize_locks(
+            [{"path": [], "attributeId": 1},
+             {"path": [], "attributeId": 2}],
+            m([1, 2, 3, 4], {1: [1] * 4 and [TRUE, FALSE, TRUE, FALSE],
+                              2: [FALSE, TRUE, FALSE, TRUE]}),
+        )
+
+
+# ---------- 未观察的特征也要出现在原因里 ----------
+
+def test_never_observed_attribute_is_explained():
+    # 属性 5 已声明但没有任何单元；卡 {1,2} 在 1 同真，在 5 全未知。
+    matrix = m(
+        [1, 2, 3, 4],
+        {
+            1: [TRUE, TRUE, FALSE, UNKNOWN],
+            2: [TRUE, TRUE, TRUE, TRUE],
+        },
+        attr_ids=[1, 2, 5],
+    )
+    r = build_tree(matrix)
+    assert r["status"] == "inseparable"
+    by = {x["attributeId"]: x for x in r["reasons"]}
+    assert 5 in by
+    assert by[5]["reason"] == "unknown"
+    assert by[5]["objectIds"] == r["subset"]
+
+
+# ---------- 乱序录入对象编号 ----------
+
+def test_scrambled_object_ids_same_subset():
+    import random
+    rows_base = {
+        1: {1: FALSE, 2: TRUE, 4: FALSE},  # 只有 3 个单元，其余未知
+    }
+    cells = {(o, 1): v for o, v in rows_base[1].items()}
+
+    def compute(order):
+        mm = Matrix(order, cells, attr_ids=[1])
+        return build_tree(mm)
+
+    canonical = compute([1, 2, 3, 4])
+    for order in ([2, 3, 4, 1], [4, 1, 3, 2], [3, 1, 4, 2]):
+        r = compute(order)
+        assert r["status"] == canonical["status"]
+        assert r["subset"] == canonical["subset"]
+
+
+def test_scrambled_ids_terminal_ids_sorted():
+    cells = {
+        (1, 1): TRUE, (2, 1): TRUE, (3, 1): FALSE, (4, 1): FALSE,
+        (1, 2): TRUE, (2, 2): UNKNOWN,
+        (3, 2): UNKNOWN, (4, 2): FALSE,
+    }
+    mm = Matrix([4, 3, 2, 1], cells, attr_ids=[1, 2])
+    r = build_tree(mm)
+    assert r["status"] == "no_lock"
+    # 假分支终点对象必须按编号升序输出，而不是按录入位置
+    assert r["terminalObjectIds"] == [3, 4]
+
+
+def test_locked_solver_matches_free_when_unlocked():
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, TRUE, FALSE, FALSE],
+        2: [TRUE, FALSE, UNKNOWN, UNKNOWN],
+        3: [UNKNOWN, UNKNOWN, TRUE, FALSE],
+    })
+    free = Solver(matrix).solve(matrix.all_mask)
+    locked = LockedSolver(matrix, {}).solve((matrix.all_mask, ()))
+    assert free == locked
+
+
+def test_lock_on_leaf_is_rejected():
+    # 根属性 1 真分支只剩 {1}；若把路径 (真,) 锁到任意特征，
+    # 叶子无处可问，应判锁定无解并指出违反的锁定。
+    matrix = m([1, 2, 3, 4], {
+        1: [TRUE, FALSE, FALSE, FALSE],
+        2: [UNKNOWN, TRUE, TRUE, FALSE],
+        4: [UNKNOWN, TRUE, FALSE, FALSE],
+    })
+    r = build_tree(matrix, [{"path": [TRUE], "attributeId": 2}])
+    assert r["status"] == "no_lock"
+    assert r["violatedLock"] == {"path": [TRUE], "attributeId": 2}
+    assert r["terminalObjectIds"] == [1]

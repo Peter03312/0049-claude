@@ -159,3 +159,102 @@ def test_404_and_delete(client):
     pid = client.post("/api/projects", json=_payload()).json()["id"]
     assert client.delete(f"/api/projects/{pid}").status_code == 204
     assert client.get(f"/api/projects/{pid}").status_code == 404
+
+
+# ---------- 路径锁定 ----------
+
+def _balanced_payload():
+    return {
+        "name": "锁定树叶",
+        "objects": [
+            {"id": 1, "label": "甲", "note": ""},
+            {"id": 2, "label": "乙", "note": ""},
+            {"id": 3, "label": "丙", "note": ""},
+            {"id": 4, "label": "丁", "note": ""},
+        ],
+        "attributes": [
+            {"id": 1, "label": "特征一"},
+            {"id": 2, "label": "特征二"},
+            {"id": 3, "label": "特征三"},
+            {"id": 4, "label": "特征四"},
+            {"id": 5, "label": "特征五"},
+        ],
+        "cells": {
+            "1:1": "true", "1:2": "true", "1:3": "unknown", "1:4": "true", "1:5": "true",
+            "2:1": "false", "2:2": "true", "2:3": "unknown", "2:4": "true", "2:5": "false",
+            "3:1": "false", "3:2": "true", "3:3": "true", "3:4": "false", "3:5": "unknown",
+            "4:1": "false", "4:2": "false", "4:3": "false", "4:4": "false", "4:5": "unknown",
+        },
+    }
+
+
+def test_lock_root_attribute_changes_tree(client):
+    payload = _balanced_payload()
+    pid = client.post("/api/projects", json=payload).json()["id"]
+
+    free = client.post(f"/api/projects/{pid}/compute").json()["result"]
+    assert free["status"] == "ok"
+    free_root = free["tree"]["attributeId"]
+
+    # 编辑项目，锁根为属性 1
+    payload["locks"] = [{"path": [], "attributeId": 1}]
+    r = client.put(f"/api/projects/{pid}", json=payload)
+    assert r.status_code == 200
+    assert r.json()["locks"] == [{"path": [], "attributeId": 1}]
+
+    locked = client.post(f"/api/projects/{pid}/compute").json()["result"]
+    assert locked["status"] == "ok"
+    assert locked["tree"]["attributeId"] == 1
+    assert locked["tree"].get("locked") is True
+    if free_root != 1:
+        # 若自由最优根不是 1，说明锁定确实改变了树
+        assert locked["score"]["preorder"] != free["score"]["preorder"]
+
+
+def test_lock_impossible_returns_no_lock_and_snapshot(client):
+    payload = _balanced_payload()
+    # 根锁为属性 2：对象 1、2、3 为真、4 为假（都已知、两边非空，合法）；
+    # 但真组 {1,2,3} 继续锁不下去的可能性——这里直接验证接口透传结果。
+    payload["locks"] = [{"path": [], "attributeId": 3}]
+    # 属性 3 在对象 1、2 上未知，根锁必然无解
+    pid = client.post("/api/projects", json=payload).json()["id"]
+    r = client.post(f"/api/projects/{pid}/compute").json()["result"]
+    assert r["status"] == "no_lock"
+    assert r["violatedLock"] == {"path": [], "attributeId": 3}
+    assert "tree" not in r
+    snaps = client.get(f"/api/projects/{pid}/snapshots").json()
+    assert snaps[0]["result"]["status"] == "no_lock"
+    assert snaps[0]["locks"] == [{"path": [], "attributeId": 3}]
+
+
+def test_lock_validation_rejects_unknown_attribute(client):
+    payload = _balanced_payload()
+    payload["locks"] = [{"path": [], "attributeId": 99}]
+    r = client.post("/api/projects", json=payload)
+    assert r.status_code == 400
+    assert "锁定" in r.json()["detail"]
+
+
+def test_locks_default_to_empty(client):
+    pid = client.post("/api/projects", json=_balanced_payload()).json()["id"]
+    p = client.get(f"/api/projects/{pid}").json()
+    assert p["locks"] == []
+
+
+def test_unobserved_attribute_appears_in_reasons(client):
+    # 属性 3 完全没有任何单元
+    payload = _payload(
+        cells={
+            "1:1": "true", "2:1": "true", "3:1": "false", "4:1": "unknown",
+            "1:2": "true", "2:2": "true", "3:2": "true", "4:2": "true",
+        }
+    )
+    # 额外补一个属性 9（无任何单元）
+    payload["attributes"].append({"id": 9, "label": "完全没观察"})
+    pid = client.post("/api/projects", json=payload).json()["id"]
+    r = client.post(f"/api/projects/{pid}/compute").json()["result"]
+    assert r["status"] == "inseparable"
+    ids = [x["attributeId"] for x in r["reasons"]]
+    assert 9 in ids
+    reason9 = next(x for x in r["reasons"] if x["attributeId"] == 9)
+    assert reason9["reason"] == "unknown"

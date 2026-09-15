@@ -10,7 +10,9 @@ import type {
   Snapshot,
 } from './types'
 import MatrixEditor from './components/MatrixEditor.vue'
+import LockEditor from './components/LockEditor.vue'
 import ResultPanel from './components/ResultPanel.vue'
+import type { PathLock } from './types'
 
 /* ---------- 全局状态 ---------- */
 const projects = ref<Project[]>([])
@@ -28,6 +30,8 @@ const name = ref('')
 const objects = ref<LeafCardObject[]>([])
 const attributes = ref<LeafCardAttribute[]>([])
 const cells = ref<CellMap>({})
+const locks = ref<PathLock[]>([])
+const lockEditor = ref<InstanceType<typeof LockEditor> | null>(null)
 
 const dirty = computed(() => {
   if (!current.value) return false
@@ -36,7 +40,8 @@ const dirty = computed(() => {
     JSON.stringify(objects.value) !== JSON.stringify(current.value.objects) ||
     JSON.stringify(attributes.value) !==
       JSON.stringify(current.value.attributes) ||
-    JSON.stringify(cells.value) !== JSON.stringify(current.value.cells)
+    JSON.stringify(cells.value) !== JSON.stringify(current.value.cells) ||
+    JSON.stringify(locks.value) !== JSON.stringify(current.value.locks ?? [])
   )
 })
 
@@ -65,6 +70,7 @@ function buildSample() {
     '3:1': 'false', '3:2': 'false', '3:3': 'true', '3:4': 'false',
     '4:1': 'false', '4:2': 'true', '4:3': 'false', '4:4': 'true',
   }
+  locks.value = []
 }
 
 function buildBlank() {
@@ -77,6 +83,7 @@ function buildBlank() {
   ]
   attributes.value = [{ id: 1, label: '特征 1' }]
   cells.value = {}
+  locks.value = []
 }
 
 /* ---------- 载入与保存 ---------- */
@@ -97,6 +104,7 @@ function editFrom(p: Project) {
   objects.value = structuredClone(p.objects)
   attributes.value = structuredClone(p.attributes)
   cells.value = structuredClone(p.cells)
+  locks.value = structuredClone(p.locks ?? [])
   errorMsg.value = ''
   infoMsg.value = ''
   loadSnapshots()
@@ -124,6 +132,10 @@ async function save(andCompute = false) {
     errorMsg.value = '每个特征都要有名字。'
     return
   }
+  if (lockEditor.value && !lockEditor.value.validateOrWarn()) {
+    errorMsg.value = '预定步骤还没设置好，请检查上面的提示。'
+    return
+  }
   const input = {
     name: name.value.trim(),
     objects: objects.value.map((o) => ({
@@ -136,6 +148,7 @@ async function save(andCompute = false) {
       label: a.label.trim(),
     })),
     cells: cells.value,
+    locks: locks.value,
   }
   saving.value = true
   try {
@@ -146,20 +159,23 @@ async function save(andCompute = false) {
         JSON.stringify(objects.value) !== JSON.stringify(current.value.objects) ||
         JSON.stringify(attributes.value) !==
           JSON.stringify(current.value.attributes) ||
-        JSON.stringify(cells.value) !== JSON.stringify(current.value.cells)
+        JSON.stringify(cells.value) !== JSON.stringify(current.value.cells) ||
+        JSON.stringify(locks.value) !== JSON.stringify(current.value.locks ?? [])
       if (changed) {
         current.value = await api.updateProject(current.value.id, input)
         infoMsg.value = '已保存。输入有改动，旧的辨认树已标记过期。'
-      } else {
-        infoMsg.value = '没有需要保存的改动。'
       }
     } else {
       current.value = await api.createProject(input)
       infoMsg.value = '已保存辨认卡。'
     }
     await loadProjects()
-    if (andCompute && changed) {
+    if (andCompute) {
+      // 点的就是「保存并算出」：无论有没有改动都要算出树来
+      infoMsg.value = ''
       await runCompute()
+    } else if (!changed) {
+      infoMsg.value = '没有需要保存的改动。'
     }
   } catch (e) {
     errorMsg.value = (e as Error).message
@@ -267,6 +283,12 @@ onMounted(loadProjects)
       v-model:objects="objects"
       v-model:attributes="attributes"
       v-model:cells="cells"
+    />
+
+    <LockEditor
+      ref="lockEditor"
+      v-model:locks="locks"
+      :attributes="attributes"
     />
 
     <div v-if="infoMsg" class="banner banner-info">{{ infoMsg }}</div>

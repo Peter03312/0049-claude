@@ -30,6 +30,11 @@ const names = (ids: number[]) => ids.map((i) => objectName(props.objects, i))
 const attrLabel = (id: number) =>
   props.attributes.find((a) => a.id === id)?.label ?? `特征 ${id}`
 
+const pathWords = (path: ('true' | 'false')[]) =>
+  path.length
+    ? path.map((b, i) => `${i + 1} 答「${b === 'true' ? '是' : '不是'}」`).join('，')
+    : '一开始（第一个问题）'
+
 const reasonText = (r: BlockReason) => {
   if (r.reason === 'unknown') {
     return `卡片「${names(r.objectIds).join('、')}」在这个特征上还是「？」（还没观察），不能拿来分组。`
@@ -62,6 +67,9 @@ const inseparable = computed(() =>
         ✅ 每一步都能把剩下的卡片分成不空的两边，一直分到只剩一张。
         最坏情况下要问 <b>{{ okResult.score.maxDepth }}</b> 问，
         全部卡片的问题总数 <b>{{ okResult.score.sumDepth }}</b>，已经做到最小。
+      </p>
+      <p v-if="(okResult.locks?.length ?? 0) > 0" class="banner banner-info">
+        🔒 已按你的 {{ okResult.locks!.length }} 条预定步骤固定相应问题（树中带 🔒 标记）。
       </p>
 
       <div class="tabs">
@@ -101,9 +109,28 @@ const inseparable = computed(() =>
     <template v-else-if="noLock">
       <div class="fail-box">
         <p class="fail-emoji">🔒</p>
-        <h3>按特征一路锁下去，最后有几张叶子分不开</h3>
-        <p>从根开始，最短的死路是这样走：</p>
-        <ol class="path">
+        <h3>
+          {{
+            noLock.violatedLock
+              ? '预定要问的特征在这里用不了'
+              : '按特征一路锁下去，最后有几张叶子分不开'
+          }}
+        </h3>
+
+        <div v-if="noLock.violatedLock" class="violated">
+          你预定：<b>{{ pathWords(noLock.violatedLock.path) }}</b
+          >时必须问
+          <b>
+            <span class="id-badge">{{ noLock.violatedLock.attributeId }}</span>
+            {{ attrLabel(noLock.violatedLock.attributeId) }}
+          </b>
+          ，但这个特征在这里分不出卡片（见下）。
+        </div>
+
+        <p v-if="noLock.blockingPath.length">
+          从根开始，最短的死路是这样走：
+        </p>
+        <ol v-if="noLock.blockingPath.length" class="path">
           <li v-for="(step, i) in noLock.blockingPath" :key="i">
             问「<b>{{ attrLabel(step.attributeId) }}</b
             >？」→ 回答
@@ -182,6 +209,15 @@ const inseparable = computed(() =>
 
 .path li {
   margin-bottom: 4px;
+}
+
+.violated {
+  background: #fff;
+  border: 1px solid #f3ddb0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 15px;
 }
 
 .ans-yes {

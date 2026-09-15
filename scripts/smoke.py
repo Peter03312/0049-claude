@@ -162,6 +162,47 @@ def main(base: str) -> None:
             raise
     print("  ✓ 4–20 张对象卡的校验生效")
 
+    # 9) 路径锁定：根必须问属性 2（根合法，整树可完成）
+    locked_ok = dict(project)
+    locked_ok["name"] = "锁定成功"
+    locked_ok["locks"] = [{"path": [], "attributeId": 2}]
+    _, p_lk = call("POST", f"{base}/api/projects", locked_ok)
+    _, c_lk = call("POST", f"{base}/api/projects/{p_lk['id']}/compute")
+    rlk = c_lk["result"]
+    assert rlk["status"] == "ok", rlk
+    assert rlk["tree"]["attributeId"] == 2
+    assert rlk["tree"].get("locked") is True
+    print(f"  ✓ 路径锁定生效：根被固定为属性 2")
+
+    # 10) 锁定无解：根必须问一个含未知、不合法的属性
+    locked_bad = dict(no_lock)
+    locked_bad["locks"] = [{"path": [], "attributeId": 2}]
+    _, p_lb = call("POST", f"{base}/api/projects", locked_bad)
+    _, c_lb = call("POST", f"{base}/api/projects/{p_lb['id']}/compute")
+    rlb = c_lb["result"]
+    assert rlb["status"] == "no_lock", rlb
+    assert rlb.get("violatedLock") == {"path": [], "attributeId": 2}
+    assert "tree" not in rlb
+    print("  ✓ 锁定无解返回 violatedLock，且无残缺树")
+
+    # 11) 锁定校验：锁不存在的属性 -> 400
+    bad_lock = dict(project)
+    bad_lock["locks"] = [{"path": [], "attributeId": 999}]
+    try:
+        call("POST", f"{base}/api/projects", bad_lock)
+        raise AssertionError("不存在的锁定属性应返回 400")
+    except AssertionError as e:
+        if "400" not in str(e):
+            raise
+    print("  ✓ 非法锁定返回 400")
+
+    # 12) 未保存改动时点「保存并算出」也必须出结果（修复回归）
+    _, p_nochg = call("POST", f"{base}/api/projects", project)
+    # 直接对全新项目计算（等价于先保存后立刻算）
+    _, c_first = call("POST", f"{base}/api/projects/{p_nochg['id']}/compute")
+    assert c_first["result"]["status"] == "ok"
+    print("  ✓ 保存后立即计算可直接得到树")
+
 
 if __name__ == "__main__":
     port = sys.argv[1] if len(sys.argv) > 1 else "8123"

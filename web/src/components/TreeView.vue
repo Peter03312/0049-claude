@@ -31,6 +31,9 @@ defineProps<{
         <span class="q-step">第 {{ (depth ?? 0) + 1 }} 问</span>
         <span class="id-badge">{{ node.attributeId }}</span>
         <strong>{{ attributeName(attributes, node.attributeId) }}？</strong>
+        <span v-if="node.locked" class="lock-badge" title="这一问按你的预定步骤固定">
+          🔒
+        </span>
       </div>
       <div class="children">
         <TreeView
@@ -107,6 +110,10 @@ defineProps<{
   color: #fff;
   border-radius: 999px;
   padding: 1px 10px;
+}
+
+.lock-badge {
+  font-size: 14px;
 }
 
 .children {
