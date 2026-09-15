@@ -121,14 +121,18 @@ async function boot() {
   }
 }
 
-function editFrom(p: Project) {
+function editFrom(project: Project) {
+  // projects 列表里的对象（含其嵌套数组）已被 Vue 包成响应式 Proxy，
+  // structuredClone 不能克隆 Proxy；编辑态需要一份独立、可自由修改的副本，
+  // 用 JSON 深拷贝（项目数据全部是可序列化的普通 JSON）。
+  const p = JSON.parse(JSON.stringify(project)) as Project
   current.value = p
   localStorage.setItem('leafcards.currentId', String(p.id))
   name.value = p.name
-  objects.value = structuredClone(p.objects)
-  attributes.value = structuredClone(p.attributes)
-  cells.value = structuredClone(p.cells)
-  locks.value = structuredClone(p.locks ?? [])
+  objects.value = p.objects
+  attributes.value = p.attributes
+  cells.value = p.cells
+  locks.value = p.locks ?? []
   errorMsg.value = ''
   infoMsg.value = ''
   loadSnapshots()

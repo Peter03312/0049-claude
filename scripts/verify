@@ -22,8 +22,8 @@ fi
 echo "▶ 2/4 后端测试（核心算法 + API，覆盖最优/并列/两类无解/未知值）"
 (cd backend && "../$PY" -m pytest -q)
 
-echo "▶ 3/4 前端类型检查与生产构建"
-(cd web && ([[ -d node_modules ]] || npm ci --no-audit --no-fund) && npm run build)
+echo "▶ 3/4 前端类型检查、组件测试与生产构建"
+(cd web && ([[ -d node_modules ]] || npm ci --no-audit --no-fund) && npm run test && npm run build)
 
 echo "▶ 4/4 API 接口冒烟（启动临时服务并实际请求）"
 SMOKE_PORT="${SMOKE_PORT:-8123}"

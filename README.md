@@ -70,6 +70,7 @@ VITE_API_TARGET=http://localhost:8000 npm run dev
 
 后端测试：`cd backend && ../.venv/bin/pytest -q`
 前端构建：`cd web && npm run build`
+前端组件测试：`cd web && npm test`（vitest + happy-dom，覆盖刷新后切换辨认卡的状态一致性）
 
 ## 算法说明（`backend/app/core/tree.py`）
 
