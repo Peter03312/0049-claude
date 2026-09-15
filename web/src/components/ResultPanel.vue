@@ -111,13 +111,27 @@ const inseparable = computed(() =>
         <p class="fail-emoji">🔒</p>
         <h3>
           {{
-            noLock.violatedLock
-              ? '预定要问的特征在这里用不了'
-              : '按特征一路锁下去，最后有几张叶子分不开'
+            noLock.earlyAnswer
+              ? '预定路线在更早一步就走到答案了'
+              : noLock.violatedLock
+                ? '预定要问的特征在这里用不了'
+                : '按特征一路锁下去，最后有几张叶子分不开'
           }}
         </h3>
 
-        <div v-if="noLock.violatedLock" class="violated">
+        <p v-if="noLock.earlyAnswer" class="early-answer-text">
+          按你预定的回答走到
+          <b>{{ pathWords(noLock.violatedLock?.path ?? []) }}</b
+          >之前，卡片就已经只剩
+          <b>{{ names(noLock.terminalObjectIds).join('、') }}</b
+          >了——这一问还没问，答案就先到了，所以它没法成为辨认卡上的一步。
+          可以把这条预定步骤提前、或改成能继续分开卡片的特征。
+        </p>
+        <p v-else-if="!noLock.violatedLock">
+          按特征一路锁下去，最后有几张叶子分不开。
+        </p>
+
+        <div v-if="noLock.violatedLock && !noLock.earlyAnswer" class="violated">
           你预定：<b>{{ pathWords(noLock.violatedLock.path) }}</b
           >时必须问
           <b>
@@ -127,10 +141,13 @@ const inseparable = computed(() =>
           ，但这个特征在这里分不出卡片（见下）。
         </div>
 
-        <p v-if="noLock.blockingPath.length">
+        <p v-if="!noLock.earlyAnswer && noLock.blockingPath.length">
           从根开始，最短的死路是这样走：
         </p>
-        <ol v-if="noLock.blockingPath.length" class="path">
+        <ol
+          v-if="!noLock.earlyAnswer && noLock.blockingPath.length"
+          class="path"
+        >
           <li v-for="(step, i) in noLock.blockingPath" :key="i">
             问「<b>{{ attrLabel(step.attributeId) }}</b
             >？」→ 回答
@@ -139,13 +156,17 @@ const inseparable = computed(() =>
             </b>
           </li>
         </ol>
-        <p>
+        <p v-if="!noLock.earlyAnswer">
           走到最后，分不开的卡片是：
           <b>{{ names(noLock.terminalObjectIds).join('、') }}</b>
           （卡片编号 {{ noLock.terminalObjectIds.join('、') }}）。
         </p>
       </div>
-      <ReasonList :reasons="noLock.reasons" :reason-text="reasonText" />
+      <ReasonList
+        v-if="!noLock.earlyAnswer && noLock.reasons.length"
+        :reasons="noLock.reasons"
+        :reason-text="reasonText"
+      />
     </template>
 
     <!-- 其他无解：存在无合法二分属性的小组 -->
@@ -212,6 +233,15 @@ const inseparable = computed(() =>
 }
 
 .violated {
+  background: #fff;
+  border: 1px solid #f3ddb0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 15px;
+}
+
+.early-answer-text {
   background: #fff;
   border: 1px solid #f3ddb0;
   border-radius: 10px;

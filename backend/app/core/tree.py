@@ -180,8 +180,8 @@ class LockedSolver:
     def solve(self, state: Tuple[int, Path]) -> Optional[Score]:
         subset, path = state
         if subset & (subset - 1) == 0:
-            if subset == 0 or path in self.locks:
-                return None  # 空集，或叶子上还挂着锁定（无处可问）
+            if subset == 0 or self._has_lock_at_or_under(path):
+                return None  # 空集，或答案之后还挂着必问题
             return (0, 0, ())
         best: Optional[Score] = None
         for attr in self.choices(subset, path):
@@ -202,7 +202,9 @@ class LockedSolver:
     @lru_cache(maxsize=None)
     def build(self, state: Tuple[int, Path]) -> Optional[dict]:
         subset, path = state
-        if subset == 0 or (subset & (subset - 1) == 0 and path in self.locks):
+        if subset == 0 or (
+            subset & (subset - 1) == 0 and self._has_lock_at_or_under(path)
+        ):
             return None
         if subset & (subset - 1) == 0:
             return {
@@ -251,9 +253,9 @@ class LockedSolver:
         if subset & (subset - 1) == 0:
             if subset == 0:
                 return True
-            # 只剩一张卡就是叶子，不会再问问题；
-            # 若这里还挂着锁定，则该锁定无处可问 => 无解。
-            return path in self.locks
+            # 只剩一张卡就是叶子：本路径或其下若还挂着锁定，
+            # 必问题将在答案之后无处可问 => 无解。
+            return self._has_lock_at_or_under(path)
         for attr in self.choices(subset, path):
             f_mask, t_mask = self.m.split(attr, subset)
             if not self.is_bad((f_mask, path + (0,))) and not self.is_bad(
@@ -261,6 +263,12 @@ class LockedSolver:
             ):
                 return False
         return True
+
+    def _has_lock_at_or_under(self, path: Path) -> bool:
+        return any(
+            p == path or (len(p) > len(path) and p[: len(path)] == path)
+            for p in self.locks
+        )
 
     @lru_cache(maxsize=None)
     def best_block(
@@ -414,12 +422,106 @@ def _terminal_subset(matrix: Matrix, path: List[dict]) -> int:
     return cur
 
 
+def find_unreachable_lock(
+    matrix: Matrix, locks: LockMap
+) -> Optional[Tuple[Path, int, int]]:
+    """矩阵层面静态检查：锁定路径在「全锁定前缀」上能否到达可提问节点。
+
+    沿从根到锁定路径的锁定链行走（每一步该问什么由对应前缀上的锁定决定），
+    返回第一个无法满足的锁定：(路径, 必须问的属性, 终点候选子集)。
+
+    失败情形：
+    * 某个前缀锁定属性在当时候选集上不是合法二分属性；
+    * 走到终点时只剩 0/1 张卡——答案在更早一步就已到达，
+      后面的「必问题目」无处可问；
+    * 终点候选 ≥2，但被锁属性在该集合上不合法（含未知或同值）。
+    含自由节点前缀的路径无法静态判断，返回 None 交由建树后兜底。
+    """
+    for path in sorted(locks, key=lambda p: (len(p), p)):
+        subset = matrix.all_mask
+        for depth in range(len(path)):
+            prefix_attr = locks.get(path[:depth])
+            if prefix_attr is None:
+                subset = -1  # 标记：路径上有自由节点，不能静态判定
+                break
+            if not matrix.is_legal(prefix_attr, subset):
+                # 前缀锁定属性在当时候选集上不合法：该必问题本身无解
+                return path[:depth], prefix_attr, subset
+            f_mask, t_mask = matrix.split(prefix_attr, subset)
+            subset = t_mask if path[depth] == 1 else f_mask
+        if subset == -1:
+            continue
+        required = locks[path]
+        if subset.bit_count() < 2 or not matrix.is_legal(required, subset):
+            return path, required, subset
+    return None
+
+
+def find_unreachable_lock_in_tree(
+    tree_node: Optional[dict], locks: LockMap
+) -> Optional[Tuple[Path, int, List[int]]]:
+    """建树后兜底：在最终树里沿每条锁定路径行走。
+
+    路径上每一步都必须经过问题节点，走完后所在节点也必须是问题
+    （才有地方放「必须询问」的特征）。否则答案更早到达，该锁定被漏掉。
+    返回 (路径, 必须问的属性, 实际终点卡片编号列表)。
+    """
+    for path in sorted(locks, key=lambda p: (len(p), p)):
+        node = tree_node
+        reached = True
+        for branch in path:
+            if not node or node.get("type") != "question":
+                reached = False
+                break
+            node = node["true"] if branch == 1 else node["false"]
+        if not reached or not node or node.get("type") != "question":
+            leaves = _collect_leaf_ids(node)
+            return path, locks[path], leaves
+    return None
+
+
+def _collect_leaf_ids(node: Optional[dict]) -> List[int]:
+    if not node:
+        return []
+    if node.get("type") == "leaf":
+        return [node["objectId"]]
+    return sorted(
+        _collect_leaf_ids(node.get("false"))
+        + _collect_leaf_ids(node.get("true"))
+    )
+
+
 def _ids_of(matrix: Matrix, bits: int) -> List[int]:
     return sorted(
         matrix.object_ids[i]
         for i in range(len(matrix.object_ids))
         if (bits >> i) & 1
     )
+
+
+def _walk_lock_chain(
+    matrix: Matrix, locks: LockMap, path: Path
+) -> Tuple[List[dict], int]:
+    """沿从根到 path 的锁定链行走，返回 (经过的假/真步骤, 终点候选子集)。
+
+    每一层使用该前缀上的锁定属性；若某层没有锁定（自由节点），
+    静态行走无法继续，按无法判定返回 ([], -1)。
+    """
+    subset = matrix.all_mask
+    steps: List[dict] = []
+    for depth, branch in enumerate(path):
+        attr = locks.get(path[:depth])
+        if attr is None:
+            return [], -1
+        if not matrix.is_legal(attr, subset):
+            # 前缀锁定本身不合法：停在这一层节点上
+            return steps, subset
+        f_mask, t_mask = matrix.split(attr, subset)
+        steps.append(
+            {"attributeId": attr, "branch": FALSE if branch == 0 else TRUE}
+        )
+        subset = t_mask if branch == 1 else f_mask
+    return steps, subset
 
 
 def build_tree(matrix: Matrix, raw_locks: Optional[List[dict]] = None) -> dict:
@@ -454,23 +556,42 @@ def build_tree(matrix: Matrix, raw_locks: Optional[List[dict]] = None) -> dict:
 
     solver = LockedSolver(matrix, locks)
     root_state = (matrix.all_mask, ())
-    if not solver.is_bad(root_state):
+
+    # 矩阵层面静态检查：锁定路径是否提前到达答案 / 锁定属性不合法
+    early_violation: Optional[Tuple[Path, int, int]] = None
+    if locks:
+        early_violation = find_unreachable_lock(matrix, locks)
+
+    if not solver.is_bad(root_state) and early_violation is None:
         tree = solver.build(root_state)
         score = solver.solve(root_state)
         assert tree is not None and score is not None
-        return {
-            "status": "ok",
-            "tree": tree,
-            "score": {
-                "maxDepth": score[0],
-                "sumDepth": score[1],
-                "preorder": list(score[2]),
-            },
-            "locks": lock_list,
-        }
+        # 兜底：含自由节点前缀的锁定路径，在最终树里再走一遍
+        missed = find_unreachable_lock_in_tree(tree, locks) if locks else None
+        if missed is None:
+            return {
+                "status": "ok",
+                "tree": tree,
+                "score": {
+                    "maxDepth": score[0],
+                    "sumDepth": score[1],
+                    "preorder": list(score[2]),
+                },
+                "locks": lock_list,
+            }
+        # 树完整，但某条必问题在最终树里无处安放（答案更早到达）
+        bad_path, bad_attr, leaf_ids = missed
+        early_violation = (
+            bad_path,
+            bad_attr,
+            _subset_of_ids(matrix, leaf_ids),
+        )
 
     if locks:
-        # 锁定无解：找出最短、假先于真的阻断路径
+        if early_violation is not None:
+            return _lock_violation_result(matrix, lock_list, locks, early_violation)
+
+        # 锁定让树无法建成：按最短、假先于真找阻断路径
         path = solver.blocking_path()
         terminal = _terminal_subset(matrix, path)
         terminal_ids = _ids_of(matrix, terminal)
@@ -481,8 +602,23 @@ def build_tree(matrix: Matrix, raw_locks: Optional[List[dict]] = None) -> dict:
             "locks": lock_list,
             "blockingPath": path,
             "terminalObjectIds": terminal_ids,
-            "reasons": explain_reasons(matrix, frozenset(terminal_ids)),
+            "reasons": (
+                explain_reasons(matrix, frozenset(terminal_ids))
+                if terminal.bit_count() >= 2
+                else []
+            ),
         }
+        if terminal.bit_count() < 2:
+            # 终点只剩一张卡：在预定必问题之前答案就已经到了
+            result["earlyAnswer"] = True
+            if required is None:
+                # 阻断点虽未被锁，但某条更长的锁定在此落空
+                missed = _find_lock_extending(locks, term_path)
+                if missed is not None:
+                    result["violatedLock"] = {
+                        "path": [FALSE if b == 0 else TRUE for b in missed],
+                        "attributeId": locks[missed],
+                    }
         if required is not None:
             result["violatedLock"] = {
                 "path": [FALSE if b == 0 else TRUE for b in term_path],
@@ -511,3 +647,54 @@ def build_tree(matrix: Matrix, raw_locks: Optional[List[dict]] = None) -> dict:
         "terminalObjectIds": terminal_ids,
         "reasons": explain_reasons(matrix, frozenset(terminal_ids)),
     }
+
+
+def _find_lock_extending(
+    locks: LockMap, prefix: Path
+) -> Optional[Path]:
+    """在锁定集合中找一条以 prefix 开头、比 prefix 长的锁定路径。"""
+    candidates = [
+        p
+        for p in locks
+        if len(p) > len(prefix) and p[: len(prefix)] == prefix
+    ]
+    return min(candidates, key=lambda p: (len(p), p)) if candidates else None
+
+
+def _subset_of_ids(matrix: Matrix, ids: List[int]) -> int:
+    bits = 0
+    for oid in ids:
+        if oid in matrix.index:
+            bits |= 1 << matrix.index[oid]
+    return bits
+
+
+def _lock_violation_result(
+    matrix: Matrix,
+    lock_list: List[dict],
+    locks: LockMap,
+    violation: Tuple[Path, int, int],
+) -> dict:
+    """构造「预定必问题无法满足」的无解结果。"""
+    bad_path, bad_attr, terminal = violation
+    steps, terminal2 = _walk_lock_chain(matrix, locks, bad_path)
+    if terminal2 != -1:
+        terminal = terminal2
+    terminal_ids = _ids_of(matrix, terminal)
+    result: dict = {
+        "status": "no_lock",
+        "locks": lock_list,
+        "blockingPath": steps,
+        "terminalObjectIds": terminal_ids,
+        "violatedLock": {
+            "path": [FALSE if b == 0 else TRUE for b in bad_path],
+            "attributeId": bad_attr,
+        },
+        "reasons": [],
+    }
+    if terminal.bit_count() >= 2:
+        result["reasons"] = explain_reasons(matrix, frozenset(terminal_ids))
+    else:
+        # 只剩 0/1 张卡：在预定的必问题之前答案就已经到了
+        result["earlyAnswer"] = True
+    return result

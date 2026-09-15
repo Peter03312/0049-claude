@@ -203,6 +203,37 @@ def main(base: str) -> None:
     assert c_first["result"]["status"] == "ok"
     print("  ✓ 保存后立即计算可直接得到树")
 
+    # 13) 预定路线提前到达答案：必问题不能被悄悄忽略
+    early = {
+        "name": "答案提前到",
+        "objects": [
+            {"id": 1, "label": "甲", "note": ""},
+            {"id": 2, "label": "乙", "note": ""},
+            {"id": 3, "label": "丙", "note": ""},
+            {"id": 4, "label": "丁", "note": ""},
+        ],
+        "attributes": [
+            {"id": 1, "label": "特征一"},
+            {"id": 2, "label": "特征二"},
+            {"id": 3, "label": "特征三"},
+        ],
+        "cells": {
+            "1:1": "true", "2:1": "false", "3:1": "false", "4:1": "false",
+            "2:2": "true", "3:2": "false", "4:2": "false",
+            "3:3": "true", "4:3": "false",
+        },
+        # 第一问答「真」时只剩卡片 1；再要求第二问问 3 不可能满足
+        "locks": [{"path": ["true", "true"], "attributeId": 3}],
+    }
+    _, p_early = call("POST", f"{base}/api/projects", early)
+    _, c_early = call("POST", f"{base}/api/projects/{p_early['id']}/compute")
+    re = c_early["result"]
+    assert re["status"] == "no_lock", re
+    assert re.get("earlyAnswer") is True
+    assert re["violatedLock"] == {"path": ["true", "true"], "attributeId": 3}
+    assert "tree" not in re
+    print("  ✓ 预定路线提前到答案时明确拒绝（earlyAnswer），不返回伪完成树")
+
 
 if __name__ == "__main__":
     port = sys.argv[1] if len(sys.argv) > 1 else "8123"

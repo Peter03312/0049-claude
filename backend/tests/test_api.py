@@ -258,3 +258,65 @@ def test_unobserved_attribute_appears_in_reasons(client):
     assert 9 in ids
     reason9 = next(x for x in r["reasons"] if x["attributeId"] == 9)
     assert reason9["reason"] == "unknown"
+
+
+def test_lock_path_already_answered(client):
+    # 根属性1：真->卡片1（答案），假->属性2 继续。
+    # 锁定 (真,真) 必问属性3：第二步真之前答案已经到了，必须拒绝。
+    payload = {
+        "name": "提前到达",
+        "objects": [
+            {"id": 1, "label": "甲", "note": ""},
+            {"id": 2, "label": "乙", "note": ""},
+            {"id": 3, "label": "丙", "note": ""},
+            {"id": 4, "label": "丁", "note": ""},
+        ],
+        "attributes": [
+            {"id": 1, "label": "特征一"},
+            {"id": 2, "label": "特征二"},
+            {"id": 3, "label": "特征三"},
+        ],
+        "cells": {
+            "1:1": "true", "2:1": "false", "3:1": "false", "4:1": "false",
+            "2:2": "true", "3:2": "false", "4:2": "false",
+            "3:3": "true", "4:3": "false",
+        },
+        "locks": [{"path": ["true", "true"], "attributeId": 3}],
+    }
+    pid = client.post("/api/projects", json=payload).json()["id"]
+    r = client.post(f"/api/projects/{pid}/compute").json()["result"]
+    assert r["status"] == "no_lock"
+    assert r.get("earlyAnswer") is True
+    assert r["violatedLock"] == {"path": ["true", "true"], "attributeId": 3}
+    assert r["terminalObjectIds"] == [1]
+    assert "tree" not in r
+
+
+def test_lock_path_with_free_prefix_early_answer(client):
+    # 不锁定 (假,)；(假,真) 在自由树里就是叶子2。
+    payload = {
+        "name": "自由前缀提前到达",
+        "objects": [
+            {"id": 1, "label": "甲", "note": ""},
+            {"id": 2, "label": "乙", "note": ""},
+            {"id": 3, "label": "丙", "note": ""},
+            {"id": 4, "label": "丁", "note": ""},
+        ],
+        "attributes": [
+            {"id": 1, "label": "特征一"},
+            {"id": 2, "label": "特征二"},
+            {"id": 3, "label": "特征三"},
+        ],
+        "cells": {
+            "1:1": "true", "2:1": "false", "3:1": "false", "4:1": "false",
+            "2:2": "true", "3:2": "false", "4:2": "false",
+            "3:3": "true", "4:3": "false",
+        },
+        "locks": [{"path": ["false", "true"], "attributeId": 3}],
+    }
+    pid = client.post("/api/projects", json=payload).json()["id"]
+    r = client.post(f"/api/projects/{pid}/compute").json()["result"]
+    assert r["status"] == "no_lock"
+    assert r.get("earlyAnswer") is True
+    assert r["violatedLock"] == {"path": ["false", "true"], "attributeId": 3}
+    assert r["terminalObjectIds"] == [2]

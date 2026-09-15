@@ -87,10 +87,33 @@ function buildBlank() {
 }
 
 /* ---------- 载入与保存 ---------- */
-async function loadProjects() {
+async function loadProjects(autoOpenId: number | null = null) {
   loading.value = true
   try {
     projects.value = await api.listProjects()
+    if (autoOpenId !== null) {
+      const target = projects.value.find((p) => p.id === autoOpenId)
+      if (target) editFrom(target)
+    }
+  } catch (e) {
+    errorMsg.value = (e as Error).message
+  } finally {
+    loading.value = false
+  }
+}
+
+async function boot() {
+  loading.value = true
+  try {
+    const list = await api.listProjects()
+    projects.value = list
+    if (list.length) {
+      // 刷新后直接打开上次正在看的卡片，避免「列表在、工作区空」的半开状态
+      const savedId = Number(localStorage.getItem('leafcards.currentId') ?? 0)
+      const target =
+        list.find((p) => p.id === savedId) ?? list[list.length - 1]
+      editFrom(target)
+    }
   } catch (e) {
     errorMsg.value = (e as Error).message
   } finally {
@@ -100,6 +123,7 @@ async function loadProjects() {
 
 function editFrom(p: Project) {
   current.value = p
+  localStorage.setItem('leafcards.currentId', String(p.id))
   name.value = p.name
   objects.value = structuredClone(p.objects)
   attributes.value = structuredClone(p.attributes)
@@ -227,8 +251,11 @@ async function removeProject() {
     await api.deleteProject(current.value.id)
     current.value = null
     snapshots.value = []
-    buildBlank()
-    await loadProjects()
+    localStorage.removeItem('leafcards.currentId')
+    const rest = await api.listProjects()
+    projects.value = rest
+    if (rest.length) editFrom(rest[rest.length - 1])
+    else buildBlank()
   } catch (e) {
     errorMsg.value = (e as Error).message
   }
@@ -238,7 +265,7 @@ const resultForPanel = computed<ComputeResult | null>(() =>
   current.value?.result ?? null,
 )
 
-onMounted(loadProjects)
+onMounted(boot)
 </script>
 
 <template>
@@ -330,7 +357,7 @@ onMounted(loadProjects)
     </p>
   </section>
 
-  <section v-else-if="!loading" class="card empty-actions">
+  <section v-else-if="!loading && !projects.length" class="card empty-actions">
     <p>这是一本空观察本，先建一张辨认卡吧。</p>
     <div class="stack-row">
       <button class="btn-primary" @click="newProject(true)">🍂 用示例开始</button>

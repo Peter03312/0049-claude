@@ -66,6 +66,8 @@ export type ComputeResult =
       reasons: BlockReason[]
       locks?: PathLock[]
       violatedLock?: PathLock
+      /** true：沿预定路线在必问题之前就只剩一张卡（答案提前到达） */
+      earlyAnswer?: boolean
     }
   | {
       status: 'inseparable'

@@ -366,3 +366,67 @@ def test_lock_on_leaf_is_rejected():
     assert r["status"] == "no_lock"
     assert r["violatedLock"] == {"path": [TRUE], "attributeId": 2}
     assert r["terminalObjectIds"] == [1]
+
+
+# ---------- 预定路径提前到达答案 ----------
+
+def _chain_matrix():
+    # 自由树（根=1）：真→叶子1；假→属性2：真→叶2，假→属性3：真→叶3/假→叶4
+    return m([1, 2, 3, 4], {
+        1: [TRUE, FALSE, FALSE, FALSE],
+        2: [UNKNOWN, TRUE, FALSE, FALSE],
+        3: [UNKNOWN, UNKNOWN, TRUE, FALSE],
+    })
+
+
+def test_lock_after_answer_rejected_static():
+    matrix = _chain_matrix()
+    # 锁路径 (真,真)->属性3：第一步真后已是叶子1，必问题被漏掉
+    r = build_tree(matrix, [{"path": [TRUE, TRUE], "attributeId": 3}])
+    assert r["status"] == "no_lock"
+    assert r["earlyAnswer"] is True
+    assert r["violatedLock"] == {"path": [TRUE, TRUE], "attributeId": 3}
+    assert r["terminalObjectIds"] == [1]
+    assert "tree" not in r
+
+
+def test_lock_after_answer_via_free_prefix_rejected_by_tree_walk():
+    matrix = _chain_matrix()
+    # 路径 (假,真) 在自由树里到达叶子2；没有锁 (假,)，静态检查放行，
+    # 必须由建树后的兜底检查拦住。
+    r = build_tree(matrix, [{"path": [FALSE, TRUE], "attributeId": 3}])
+    assert r["status"] == "no_lock"
+    assert r.get("earlyAnswer") is True
+    assert r["violatedLock"] == {"path": [FALSE, TRUE], "attributeId": 3}
+    assert r["terminalObjectIds"] == [2]
+    assert "tree" not in r
+
+
+def test_lock_path_that_still_has_question_is_ok():
+    matrix = _chain_matrix()
+    # 路径 (假,假) 到达 {3,4}，那里确实还要问属性3 —— 合法锁定
+    r = build_tree(matrix, [{"path": [FALSE, FALSE], "attributeId": 3}])
+    assert r["status"] == "ok"
+    node = r["tree"]["false"]["false"]
+    assert node["attributeId"] == 3
+    assert node.get("locked") is True
+
+
+def test_lock_illegal_at_deep_terminal_gives_reasons():
+    matrix = _chain_matrix()
+    # 路径 (假,假) 到达 {3,4}，但锁的属性 1 在那里两张卡都为假（同值，不合法）
+    r = build_tree(matrix, [{"path": [FALSE, FALSE], "attributeId": 1}])
+    assert r["status"] == "no_lock"
+    assert r["violatedLock"] == {"path": [FALSE, FALSE], "attributeId": 1}
+    assert r["terminalObjectIds"] == [3, 4]
+    assert any(x["attributeId"] == 1 and x["reason"] == "same"
+               for x in r["reasons"])
+
+
+def test_lock_prefix_illegal_reports_prefix():
+    matrix = _chain_matrix()
+    # 锁 (假,)->属性3，但在根1的假组 {2,3,4} 上属性3含未知（对象2未知）
+    r = build_tree(matrix, [{"path": [FALSE, FALSE], "attributeId": 3},
+                            {"path": [FALSE], "attributeId": 3}])
+    assert r["status"] == "no_lock"
+    assert r["violatedLock"] == {"path": [FALSE], "attributeId": 3}
